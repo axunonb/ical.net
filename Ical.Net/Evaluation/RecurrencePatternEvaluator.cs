@@ -29,9 +29,9 @@ public class RecurrencePatternEvaluator : Evaluator
         r.CopyFrom(Pattern);
 
         // Convert the UNTIL value to one that matches the same time information as the reference date
-        if (r.Until != DateTime.MinValue)
+        if (r.Until is not null)
         {
-            r.Until = MatchTimeZone(referenceDate, r.Until);
+            r.Until = MatchTimeZone(referenceDate, r.Until.Value);
         }
 
         if (referenceDate.HasTime)
@@ -204,10 +204,9 @@ public class RecurrencePatternEvaluator : Evaluator
     /// For example, if the search start date (start) is Wed, Mar 23, 12:19PM, but the recurrence is Mon - Fri, 9:00AM - 5:00PM,
     /// the start dates returned should all be at 9:00AM, and not 12:19PM.
     /// </summary>
-    private HashSet<DateTime> GetDates(IDateTime seed, DateTime periodStart, DateTime periodEnd, int maxCount, RecurrencePattern pattern,
+    private IEnumerable<DateTime> GetDates(IDateTime seed, DateTime? periodStart, DateTime? periodEnd, int maxCount, RecurrencePattern pattern,
          bool includeReferenceDateInResults)
     {
-        var dates = new HashSet<DateTime>();
         // In the first step, we work with DateTime values, so we need to convert the IDateTime to DateTime
         var originalDate = DateUtil.GetSimpleDateTimeData(seed);
         var seedCopy = DateUtil.GetSimpleDateTimeData(seed);
@@ -222,7 +221,7 @@ public class RecurrencePatternEvaluator : Evaluator
 
         // optimize the start time for selecting candidates
         // (only applicable where a COUNT is not specified)
-        if (pattern.Count == int.MinValue)
+        if (pattern.Count is null)
         {
             var incremented = seedCopy;
             while (incremented < periodStart)
@@ -230,25 +229,38 @@ public class RecurrencePatternEvaluator : Evaluator
                 seedCopy = incremented;
                 IncrementDate(ref incremented, pattern, pattern.Interval);
             }
+        } else
+        {
+            if (pattern.Count < 1)
+                throw new Exception("Count must be greater than 0");
         }
 
+        // Do the enumeration in a separate method, as it is a generator method that is
+        // only executed after enumeration started. In order to do most validation upfront,
+        // do as many steps outside the generator as possible.
+        return EnumerateDates(originalDate, seedCopy, periodStart, periodEnd, maxCount, pattern);
+    }
+
+    private IEnumerable<DateTime> EnumerateDates(DateTime originalDate, DateTime seedCopy, DateTime? periodStart, DateTime? periodEnd, int maxCount, RecurrencePattern pattern)
+    {
         var expandBehavior = RecurrenceUtil.GetExpandBehaviorList(pattern);
 
         var noCandidateIncrementCount = 0;
-        var candidate = DateTime.MinValue;
-        while (maxCount < 0 || dates.Count < maxCount)
+        DateTime? candidate = null;
+        var dateCount = 0;
+        while (maxCount < 0 || dateCount < maxCount)
         {
-            if (pattern.Until != DateTime.MinValue && candidate != DateTime.MinValue && candidate > pattern.Until)
+            if (pattern.Until is not null && candidate > pattern.Until)
             {
                 break;
             }
 
-            if (candidate != DateTime.MinValue && candidate > periodEnd)
+            if (candidate > periodEnd)
             {
                 break;
             }
 
-            if (pattern.Count >= 1 && dates.Count >= pattern.Count)
+            if (dateCount >= pattern.Count)
             {
                 break;
             }
@@ -264,7 +276,7 @@ public class RecurrencePatternEvaluator : Evaluator
             {
                 noCandidateIncrementCount = 0;
 
-                foreach (var t in candidates.OrderBy(c => c).Where(t => t >= originalDate))
+                foreach (var t in candidates.Where(t => t >= originalDate))
                 {
                     candidate = t;
 
@@ -273,7 +285,7 @@ public class RecurrencePatternEvaluator : Evaluator
                     // from the previous year.
                     //
                     // exclude candidates that start at the same moment as periodEnd if the period is a range but keep them if targeting a specific moment
-                    if (pattern.Count >= 1 && dates.Count >= pattern.Count)
+                    if (dateCount >= pattern.Count)
                     {
                         break;
                     }
@@ -283,9 +295,10 @@ public class RecurrencePatternEvaluator : Evaluator
                         continue;
                     }
 
-                    if (pattern.Until == DateTime.MinValue || candidate <= pattern.Until)
+                    if (pattern.Until is null || candidate <= pattern.Until)
                     {
-                        dates.Add(candidate);
+                        yield return candidate.Value;
+                        dateCount++;
                     }
                 }
             }
@@ -300,8 +313,6 @@ public class RecurrencePatternEvaluator : Evaluator
 
             IncrementDate(ref seedCopy, pattern, pattern.Interval);
         }
-
-        return dates;
     }
 
     /// <summary>
@@ -311,7 +322,7 @@ public class RecurrencePatternEvaluator : Evaluator
     /// <param name="pattern"></param>
     /// <param name="expandBehaviors"></param>
     /// <returns>A list of possible dates.</returns>
-    private List<DateTime> GetCandidates(DateTime date, RecurrencePattern pattern, bool?[] expandBehaviors)
+    private ISet<DateTime> GetCandidates(DateTime date, RecurrencePattern pattern, bool?[] expandBehaviors)
     {
         var dates = new List<DateTime> { date };
         dates = GetMonthVariants(dates, pattern, expandBehaviors[0]);
@@ -323,7 +334,7 @@ public class RecurrencePatternEvaluator : Evaluator
         dates = GetMinuteVariants(dates, pattern, expandBehaviors[6]);
         dates = GetSecondVariants(dates, pattern, expandBehaviors[7]);
         dates = ApplySetPosRules(dates, pattern);
-        return dates;
+        return new SortedSet<DateTime>(dates);
     }
 
     /// <summary>
@@ -740,9 +751,9 @@ public class RecurrencePatternEvaluator : Evaluator
     /// </summary>
     /// <param name="dates">The list from which to extract the element.</param>
     /// <param name="offset">The position of the element to extract.</param>
-    private List<DateTime> GetOffsetDates(List<DateTime> dates, int offset)
+    private List<DateTime> GetOffsetDates(List<DateTime> dates, int? offset)
     {
-        if (offset == int.MinValue)
+        if (offset is null)
         {
             return dates;
         }
@@ -751,11 +762,11 @@ public class RecurrencePatternEvaluator : Evaluator
         var size = dates.Count;
         if (offset < 0 && offset >= -size)
         {
-            offsetDates.Add(dates[size + offset]);
+            offsetDates.Add(dates[size + offset.Value]);
         }
         else if (offset > 0 && offset <= size)
         {
-            offsetDates.Add(dates[offset - 1]);
+            offsetDates.Add(dates[offset.Value - 1]);
         }
         return offsetDates;
     }
@@ -948,7 +959,7 @@ public class RecurrencePatternEvaluator : Evaluator
     /// <param name="periodEnd">End (excl.) of the period occurrences are generated for.</param>
     /// <param name="includeReferenceDateInResults">Whether the referenceDate itself should be returned. Ignored as the reference data MUST equal the first occurrence of an RRULE.</param>
     /// <returns></returns>
-    public override HashSet<Period> Evaluate(IDateTime referenceDate, DateTime periodStart, DateTime periodEnd, bool includeReferenceDateInResults)
+    public override IEnumerable<Period> Evaluate(IDateTime referenceDate, DateTime? periodStart, DateTime? periodEnd, bool includeReferenceDateInResults)
     {
         if (Pattern.Frequency != FrequencyType.None && Pattern.Frequency < FrequencyType.Daily && !referenceDate.HasTime)
         {
@@ -966,7 +977,7 @@ public class RecurrencePatternEvaluator : Evaluator
         var periodQuery = GetDates(referenceDate, periodStart, periodEnd, -1, pattern, includeReferenceDateInResults)
             .Select(dt => CreatePeriod(dt, referenceDate));
 
-        return new HashSet<Period>(periodQuery);
+        return periodQuery;
     }
 
     private static DateTime MatchTimeZone(IDateTime reference, DateTime until)

@@ -64,32 +64,35 @@ public class RecurrencePatternSerializer : EncodableDataTypeSerializer
         CheckRange(name, value, min, max, allowZero);
     }
 
+    public virtual void CheckRange(string name, int? value, int min, int max)
+    {
+        var allowZero = min == 0 || max == 0;
+        CheckRange(name, value, min, max, allowZero);
+    }
+
     public virtual void CheckRange(string name, int value, int min, int max, bool allowZero)
     {
-        if (value != int.MinValue && (value < min || value > max || (!allowZero && value == 0)))
+        if ((value < min || value > max || (!allowZero && value == 0)))
         {
             throw new ArgumentException(name + " value " + value + " is out of range. Valid values are between " + min + " and " + max +
                                         (allowZero ? "" : ", excluding zero (0)") + ".");
         }
     }
 
-    public virtual void CheckMutuallyExclusive<T, TU>(string name1, string name2, T obj1, TU obj2)
+    public virtual void CheckRange(string name, int? value, int min, int max, bool allowZero)
     {
-        if (Equals(obj1, default(T)) || Equals(obj2, default(TU)))
+        if (value != null && (value < min || value > max || (!allowZero && value == 0)))
         {
-            return;
+            throw new ArgumentException(name + " value " + value + " is out of range. Valid values are between " + min + " and " + max +
+                                        (allowZero ? "" : ", excluding zero (0)") + ".");
         }
-        // If the object is MinValue instead of its default, consider
-        // that to be unassigned.
+    }
 
-        var t1 = obj1.GetType();
-
-        var fi1 = t1.GetField("MinValue");
-        var fi2 = t1.GetField("MinValue");
-
-        var isMin1 = fi1 != null && obj1.Equals(fi1.GetValue(null));
-        var isMin2 = fi2 != null && obj2.Equals(fi2.GetValue(null));
-        if (isMin1 || isMin2)
+    public virtual void CheckMutuallyExclusive<T, TU>(string name1, string name2, T? obj1, TU? obj2)
+        where T : struct
+        where TU : struct
+    {
+        if ((obj1 == null) || (obj2 == null))
         {
             return;
         }
@@ -132,23 +135,18 @@ public class RecurrencePatternSerializer : EncodableDataTypeSerializer
         //every week for a WEEKLY rule, every month for a MONTHLY rule and
         //every year for a YEARLY rule.
         var interval = recur.Interval;
-        if (interval == int.MinValue)
-        {
-            interval = 1;
-        }
-
         if (interval != 1)
         {
             values.Add("INTERVAL=" + interval);
         }
 
-        if (recur.Until != DateTime.MinValue)
+        if (recur.Until is not null)
         {
             var serializer = factory.Build(typeof(IDateTime), SerializationContext) as IStringSerializer;
             if (serializer != null)
             {
-                var until = new CalDateTime(DateOnly.FromDateTime(recur.Until), TimeOnly.FromDateTime(recur.Until),
-                    recur.Until.Kind == DateTimeKind.Utc ? "UTC" : null);
+                var until = new CalDateTime(DateOnly.FromDateTime(recur.Until.Value), TimeOnly.FromDateTime(recur.Until.Value),
+                    recur.Until.Value.Kind == DateTimeKind.Utc ? "UTC" : null);
 
                 values.Add("UNTIL=" + serializer.SerializeToString(until));
             }
@@ -159,7 +157,7 @@ public class RecurrencePatternSerializer : EncodableDataTypeSerializer
             values.Add("WKST=" + Enum.GetName(typeof(DayOfWeek), recur.FirstDayOfWeek).ToUpper().Substring(0, 2));
         }
 
-        if (recur.Count != int.MinValue)
+        if (recur.Count.HasValue)
         {
             values.Add("COUNT=" + recur.Count);
         }
@@ -409,11 +407,12 @@ public class RecurrencePatternSerializer : EncodableDataTypeSerializer
                 }
                 else if ((match = RelativeDaysOfWeek.Match(item)).Success)
                 {
-                    var num = int.MinValue;
+                    int? num = null;
                     if (match.Groups["Num"].Success)
                     {
-                        if (int.TryParse(match.Groups["Num"].Value, out num))
+                        if (int.TryParse(match.Groups["Num"].Value, out var n))
                         {
+                            num = n;
                             if (match.Groups["Last"].Success)
                             {
                                 // Make number negative

@@ -3,6 +3,7 @@
 // Licensed under the MIT license.
 //
 
+#nullable enable
 using System;
 using System.Collections.Generic;
 using System.IO;
@@ -19,29 +20,16 @@ namespace Ical.Net.DataTypes;
 /// </summary>
 public class RecurrencePattern : EncodableDataType
 {
-    private int _interval = int.MinValue;
+    private int? _interval;
 #pragma warning disable 0618
     private RecurrenceRestrictionType? _restrictionType;
     private RecurrenceEvaluationModeType? _evaluationMode;
 #pragma warning restore 0618
     public FrequencyType Frequency { get; set; }
 
-    private DateTime _until = DateTime.MinValue;
-    public DateTime Until
-    {
-        get => _until;
-        set
-        {
-            if (_until == value && _until.Kind == value.Kind)
-            {
-                return;
-            }
+    public DateTime? Until { get; set; }
 
-            _until = value;
-        }
-    }
-
-    public int Count { get; set; } = int.MinValue;
+    public int? Count { get; set; }
 
     /// <summary>
     /// Specifies how often the recurrence should repeat.
@@ -51,9 +39,7 @@ public class RecurrencePattern : EncodableDataType
     /// </summary>
     public int Interval
     {
-        get => _interval == int.MinValue
-            ? 1
-            : _interval;
+        get => _interval ?? 1;
         set => _interval = value;
     }
 
@@ -146,7 +132,8 @@ public class RecurrencePattern : EncodableDataType
             return;
         }
         var serializer = new RecurrencePatternSerializer();
-        CopyFrom(serializer.Deserialize(new StringReader(value)) as ICopyable);
+        if (serializer.Deserialize(new StringReader(value)) is ICopyable deserialized)
+            CopyFrom(deserialized);
     }
 
     public override string ToString()
@@ -174,7 +161,7 @@ public class RecurrencePattern : EncodableDataType
                                                       && CollectionEquals(ByMonth, other.ByMonth)
                                                       && CollectionEquals(BySetPosition, other.BySetPosition);
 
-    public override bool Equals(object obj)
+    public override bool Equals(object? obj)
     {
         if (ReferenceEquals(null, obj)) return false;
         if (ReferenceEquals(this, obj)) return true;
@@ -192,7 +179,7 @@ public class RecurrencePattern : EncodableDataType
 #pragma warning restore 0618
             hashCode = (hashCode * 397) ^ (int) Frequency;
             hashCode = (hashCode * 397) ^ Until.GetHashCode();
-            hashCode = (hashCode * 397) ^ Count;
+            hashCode = (hashCode * 397) ^ (Count ?? 0);
             hashCode = (hashCode * 397) ^ (int) FirstDayOfWeek;
             hashCode = (hashCode * 397) ^ CollectionHelpers.GetHashCode(BySecond);
             hashCode = (hashCode * 397) ^ CollectionHelpers.GetHashCode(ByMinute);
