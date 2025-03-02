@@ -9,6 +9,7 @@ using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
 using System.Linq;
+using System.Reflection;
 using System.Text.RegularExpressions;
 using Ical.Net.CalendarComponents;
 using Ical.Net.DataTypes;
@@ -3318,19 +3319,19 @@ END:VCALENDAR";
         Assert.That(occurrences, Has.Count.EqualTo(5));
 
         var exDate = _now.AddDays(1);
-        e.ExceptionDates.Add(new CalDateTime(exDate, false));
+        e.ExceptionDates.Add(exDate);
         occurrences = e.GetOccurrences(searchStart, searchEnd).ToList();
         Assert.That(occurrences, Has.Count.EqualTo(4));
 
         //Specifying just a date should "black out" that date
-        var excludeTwoDaysFromNow = _now.AddDays(2).Date;
-        e.ExceptionDates.Add(new CalDateTime(excludeTwoDaysFromNow, false));
+        var excludeTwoDaysFromNow = new CalDateTime(_now.Date).AddDays(2);
+        e.ExceptionDates.Add(excludeTwoDaysFromNow);
         occurrences = e.GetOccurrences(searchStart, searchEnd).ToList();
         Assert.That(occurrences, Has.Count.EqualTo(3));
     }
 
-    private static readonly DateTime _now = DateTime.SpecifyKind(DateTime.Now, DateTimeKind.Unspecified);
-    private static readonly DateTime _later = _now.AddHours(1);
+    private static readonly CalDateTime _now = CalDateTime.Now;
+    private static readonly CalDateTime _later = _now.AddHours(1);
     private static CalendarEvent GetEventWithRecurrenceRules()
     {
         var dailyForFiveDays = new RecurrencePattern(FrequencyType.Daily, 1)
@@ -3382,18 +3383,18 @@ END:VCALENDAR";
 
         var e = new CalendarEvent
         {
-            DtStart = new CalDateTime(_now, tzid),
-            DtEnd = new CalDateTime(_later, tzid),
+            DtStart = new CalDateTime(_now.Date, _now.Time, tzid),
+            DtEnd = new CalDateTime(_later.Date, _later.Time, tzid),
             RecurrenceRules = new List<RecurrencePattern> { rrule },
         };
 
-        e.ExceptionDates.Add(new CalDateTime(_now.AddDays(1), tzid));
+        e.ExceptionDates.Add(new CalDateTime(_now.Date, _now.Time, tzid).AddDays(1));
 
         var serialized = SerializationHelpers.SerializeToString(e);
         const string expected = "TZID=Europe/Stockholm";
         Assert.That(Regex.Matches(serialized, expected), Has.Count.EqualTo(3));
 
-        e.ExceptionDates.Add(new CalDateTime(_now.AddDays(2), tzid));
+        e.ExceptionDates.Add(new CalDateTime(_now.Date, _now.Time, tzid).AddDays(2));
         serialized = SerializationHelpers.SerializeToString(e);
         Assert.That(Regex.Matches(serialized, expected), Has.Count.EqualTo(3));
     }
@@ -3459,8 +3460,8 @@ END:VCALENDAR";
     {
         var e = new CalendarEvent
         {
-            DtStart = new CalDateTime(_now, _tzid),
-            DtEnd = new CalDateTime(_later, _tzid),
+            DtStart = new CalDateTime(_now.Date, _now.Time, _tzid),
+            DtEnd = new CalDateTime(_later.Date, _later.Time, _tzid),
         };
         return e;
     }
@@ -3632,7 +3633,7 @@ END:VCALENDAR";
     [TestCase(null, false)]
     [TestCase(CalDateTime.UtcTzId, false)]
     [TestCase("America/New_York", true)]
-    public void DisallowedUntilShouldThrow(string? tzId, bool shouldThrow)
+    public void DisallowedUntilShouldThrow(string tzId, bool shouldThrow)
     {
         var dt = new CalDateTime(2025, 11, 08, 10, 30, 00, tzId);
         var recPattern = new RecurrencePattern(FrequencyType.Daily, 1);

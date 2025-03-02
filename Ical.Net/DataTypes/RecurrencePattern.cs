@@ -109,7 +109,7 @@ public class RecurrencePattern : EncodableDataType
             CopyFrom(deserialized);
     }
 
-    public override string ToString()
+    public override string? ToString()
     {
         var serializer = new RecurrencePatternSerializer();
         return serializer.SerializeToString(this);
