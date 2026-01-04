@@ -570,6 +570,7 @@ internal sealed class RecurrencePatternEvaluator
                 }
             }
         }
+        yield break;
 
         static bool MatchesByDayOfYear(WeekDayValue weekDay, LocalDate value)
         {
