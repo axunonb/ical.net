@@ -822,7 +822,7 @@ internal sealed class RecurrencePatternEvaluator
             }
         }
 
-        values.Sort();
+        values.Sort(); 
 
         return values;
     }

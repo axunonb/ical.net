@@ -387,17 +387,17 @@ INSTANCES:20260301,20270301,20290301,20300301
 
 ######################## PR/901 TESTS ########################
 
-# BYMONTHDAY with invalid zero offset for BYDAY is ignored
+# BYMONTHDAY with any invalid zero offset for BYDAY is ignored
 RRULE:FREQ=MONTHLY;COUNT=3;BYMONTHDAY=13;BYDAY=0MO,SA
 DTSTART:20260613
 INSTANCES:20260613,20270213,20270313
 
-# BYYEARDAY with invalid zero offset for BYDAY is ignored
+# BYYEARDAY with any invalid zero offset for BYDAY is ignored
 RRULE:FREQ=YEARLY;COUNT=3;BYDAY=MO,0SA;BYYEARDAY=1,8
 DTSTART:20290108
 INSTANCES:20290108,20350101,20350108
 
-# BYMONTH with invalid zero offset for BYDAY is ignored
+# BYMONTH with any invalid zero offset for BYDAY is ignored
 RRULE:FREQ=YEARLY;BYDAY=4TH,0MO;BYMONTH=11;COUNT=3
 DTSTART:20251127
 INSTANCES:20251127,20261126,20271125
