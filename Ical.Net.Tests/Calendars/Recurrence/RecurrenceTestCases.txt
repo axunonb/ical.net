@@ -402,3 +402,9 @@ RRULE:FREQ=MONTHLY;BYWEEKNO=10
 DTSTART:20260101
 EXCEPTION:Ical.Net.Evaluation.EvaluationException
 EXCEPTION-STEP:Enumeration
+
+# Evaluation for BYYEARDAY with invalid FREQ should throw exception
+RRULE:FREQ=MONTHLY;BYYEARDAY=14;COUNT=3
+DTSTART:20260101
+EXCEPTION:Ical.Net.Evaluation.EvaluationException
+EXCEPTION-STEP:Enumeration
