@@ -41,6 +41,9 @@ internal sealed class RecurrencePatternEvaluator
         Instant? periodStart,
         EvaluationOptions? options)
     {
+        var test = 4;
+        test = test / 2;
+
         _referenceDate = referenceDate;
         _periodStart = periodStart;
         _options = options;
