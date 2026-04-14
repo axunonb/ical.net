@@ -221,5 +221,12 @@ public abstract class RecurringComponent : UniqueComponent, IRecurringComponent
     public virtual IEnumerable<AlarmOccurrence> PollAlarms() => PollAlarms(null, null);
 
     public virtual IEnumerable<AlarmOccurrence> PollAlarms(CalDateTime? startTime, CalDateTime? endTime)
-        => Alarms.Select(a => a.Poll(startTime).TakeWhile(p => (endTime == null) || (p.Period?.StartTime < endTime))).OrderedMergeMany();
+        => Alarms
+            .Select(a => a.Poll(startTime)
+                // Each per-alarm stream from a.Poll() is already time-sorted
+                // (via OrderedNestedMergeMany<T>(this IEnumerable<IEnumerable<T>>)),
+                // so SkipWhile correctly drops all alarms firing before StartTime without scanning past them.
+                .SkipWhile(p => startTime != null && p.Period?.StartTime < startTime)
+                .TakeWhile(p => (endTime == null) || (p.Period?.StartTime < endTime)))
+            .OrderedMergeMany();
 }

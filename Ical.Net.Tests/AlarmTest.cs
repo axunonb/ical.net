@@ -162,7 +162,9 @@ public class AlarmTests
             }
         });
 
-        var alarmOccurrences = e.PollAlarms(e.Start, e.Start.AddDays(1))
+        // DATE-TIME triggers are absolute; the alarm fires on Apr 5 regardless of the
+        // component's DTSTART (Apr 7). Polling with no startTime returns the alarm.
+        var alarmOccurrences = e.PollAlarms(null, null)
             .Select(x => x.DateTime!)
             .ToList();
 
@@ -188,13 +190,15 @@ public class AlarmTests
             Trigger = new Trigger(new Duration(days: -1))
         });
 
+        // Weekly occurrences: Apr 7, Apr 14, Apr 21, Apr 28.
+        // TRIGGER:-P1D fires 1 day before each: Apr 6, Apr 13, Apr 20, Apr 27.
+        // Apr 6 fires before startTime (Apr 7) and is correctly excluded per RFC 5545.
         var alarmOccurrences = e.PollAlarms(e.Start, e.Start.AddDays(21))
             .Select(x => x.DateTime!)
             .ToList();
 
         var expectedAlarms = new[]
         {
-            new CalDateTime(2026, 4, 6),
             new CalDateTime(2026, 4, 13),
             new CalDateTime(2026, 4, 20),
             new CalDateTime(2026, 4, 27)
@@ -222,19 +226,15 @@ public class AlarmTests
     [Test]
     public void RecurringAlarm_NegativeTrigger_BoundaryOccurrenceShouldBeIncluded()
     {
-        // BUG in Alarm.GetOccurrences (Alarm.cs):
-        //   TakeWhileBefore(endDate) is applied to component occurrence START times, not to
-        //   alarm fire times. For a negative trigger such as TRIGGER:-P1D, the component
-        //   occurrence that starts AT endDate fires its alarm at (endDate - 1 day), which IS
-        //   within the polling window [startTime, endDate). However, TakeWhileBefore(endDate)
-        //   excludes that component occurrence because its start time equals endDate, so the
-        //   alarm for that occurrence is silently dropped.
+        // Verifies that a component occurrence whose alarm fire time falls within the
+        // polling window [startTime, endTime) is correctly included even when the
+        // component's own DTSTART coincides with endTime (boundary case).
         //
-        // FIX NEEDED in Alarm.GetOccurrences:
-        //   Expand the upper bound used to query component occurrences to
-        //   (endDate - triggerDuration), so that occurrences whose alarms fire before endDate
-        //   are not excluded. For a negative trigger the Duration is negative, so subtracting
-        //   it produces a later date, correctly widening the component window.
+        // Weekly occurrences: Apr 7, Apr 14, Apr 21, Apr 28, ...
+        // Alarms (TRIGGER:-P1D):     Apr 6, Apr 13, Apr 20, Apr 27, ...
+        //
+        // The Apr 28 occurrence fires its alarm on Apr 27 — within [Apr 7 09:00, Apr 28 09:00).
+        // The Apr 6 alarm fires before startTime (Apr 7 09:00) and is excluded per RFC 5545.
 
         CalendarEvent e = new()
         {
@@ -247,13 +247,6 @@ public class AlarmTests
             Trigger = new Trigger(new Duration(days: -1))
         });
 
-        // Weekly occurrences: Apr 7, Apr 14, Apr 21, Apr 28, ...
-        // Alarm fires 1 day before:  Apr 6, Apr 13, Apr 20, Apr 27, ...
-        //
-        // The Apr 28 occurrence fires its alarm on Apr 27 — within [Apr 7, Apr 28 09:00).
-        // Bug: TakeWhileBefore(Apr 28 09:00) excludes the Apr 28 occurrence because
-        //      Apr 28 09:00 is NOT strictly before Apr 28 09:00, so the Apr 27 alarm is
-        //      never generated.
         var results = e.PollAlarms(
                 new CalDateTime(2026, 4, 7, 9, 0, 0, "UTC"),
                 new CalDateTime(2026, 4, 28, 9, 0, 0, "UTC"))
@@ -261,29 +254,21 @@ public class AlarmTests
             .OrderBy(x => x)
             .ToList();
 
-        // Currently fails: returns [Apr 6, Apr 13, Apr 20] — Apr 27 is missing.
         Assert.That(results, Is.EqualTo(new[]
         {
-            new CalDateTime(2026, 4,  6, 9, 0, 0, "UTC"), // alarm for Apr 7  occurrence
-            new CalDateTime(2026, 4, 13, 9, 0, 0, "UTC"), // alarm for Apr 14 occurrence
-            new CalDateTime(2026, 4, 20, 9, 0, 0, "UTC"), // alarm for Apr 21 occurrence
-            new CalDateTime(2026, 4, 27, 9, 0, 0, "UTC"), // alarm for Apr 28 occurrence — currently MISSING
+            new CalDateTime(2026, 4, 13, 9, 0, 0, "UTC"),
+            new CalDateTime(2026, 4, 20, 9, 0, 0, "UTC"),
+            new CalDateTime(2026, 4, 27, 9, 0, 0, "UTC"),
         }));
     }
 
     [Test]
     public void RecurringAlarm_WithRepeat_EndTimeCutoffDoesNotDropEarlierRepetitions()
     {
-        // BUG in RecurringComponent.PollAlarms (RecurringComponent.cs):
-        //   PollAlarms applies the endTime filter with TakeWhile instead of Where.
-        //   After Alarm.AddRepeatedItems, the alarm list is ordered by grouping, not by time:
-        //     [base₁, base₂, rep₁₁, rep₁₂, rep₂₁, rep₂₂]
-        //   If base₂ is >= endTime the TakeWhile stops immediately, never evaluating rep₁₁
-        //   or rep₁₂, which may be perfectly valid in-range alarms for occurrence 1.
-        //
-        // FIX NEEDED in RecurringComponent.PollAlarms:
-        //   Replace TakeWhile with Where for the endTime predicate, since the alarm list
-        //   returned by Alarm.Poll is not guaranteed to be sorted by fire time.
+        // Verifies that alarm repetitions for an earlier component occurrence are included
+        // even when a later occurrence's base alarm falls at or after endTime.
+        // The streaming implementation (OrderedNestedMergeMany) produces a globally
+        // time-sorted stream, so TakeWhile correctly stops only when fire times exceed endTime.
 
         CalendarEvent e = new()
         {
@@ -301,13 +286,9 @@ public class AlarmTests
             Duration = new Duration(hours: 1)
         });
 
-        // endTime = Apr 14 09:30 UTC.
-        // Apr 14 component start (09:00) < Apr 14 09:30 → included by TakeWhileBefore.
-        // Its base alarm fires at Apr 14 10:00 → should be excluded by the endTime filter.
-        //
-        // AddRepeatedItems produces: [Apr 7 10:00, Apr 14 10:00, Apr 7 11:00, Apr 7 12:00, ...]
-        // TakeWhile(< Apr 14 09:30): Apr 7 10:00 ✓ | Apr 14 10:00 ✗ → STOPS here.
-        // Apr 7 11:00 and Apr 7 12:00 are never evaluated, even though both are < Apr 14 09:30.
+        // endTime = Apr 14 09:30. The sorted stream is:
+        //   [Apr 7 10:00, Apr 7 11:00, Apr 7 12:00, Apr 14 10:00, ...]
+        // TakeWhile(< Apr 14 09:30) includes all three Apr 7 alarms and stops at Apr 14 10:00.
         var results = e.PollAlarms(
                 new CalDateTime(2026, 4, 7, 9, 0, 0, "UTC"),
                 new CalDateTime(2026, 4, 14, 9, 30, 0, "UTC"))
@@ -315,12 +296,11 @@ public class AlarmTests
             .OrderBy(x => x)
             .ToList();
 
-        // Currently fails: returns only [Apr 7 10:00]. Apr 7 11:00 and 12:00 are dropped.
         Assert.That(results, Is.EqualTo(new[]
         {
-            new CalDateTime(2026, 4, 7, 10, 0, 0, "UTC"), // base alarm for Apr 7
-            new CalDateTime(2026, 4, 7, 11, 0, 0, "UTC"), // 1st repetition — currently MISSING
-            new CalDateTime(2026, 4, 7, 12, 0, 0, "UTC"), // 2nd repetition — currently MISSING
+            new CalDateTime(2026, 4, 7, 10, 0, 0, "UTC"),
+            new CalDateTime(2026, 4, 7, 11, 0, 0, "UTC"),
+            new CalDateTime(2026, 4, 7, 12, 0, 0, "UTC"),
         }));
     }
 
@@ -334,12 +314,11 @@ public class AlarmTests
         };
 
         // TRIGGER:PT0S (fires at component start), REPEAT:2, DURATION:P10D
-        // Component window = endDate - Duration.Zero = Apr 25 → includes Apr 7, Apr 14, Apr 21.
         // Apr  7 occurrence => alarms: Apr  7, Apr 17, Apr 27
         // Apr 14 occurrence => alarms: Apr 14, Apr 24, May  4
         // Apr 21 occurrence => alarms: Apr 21, May  1, May 11
-        // AddRepeatedItems list (NOT time-sorted):
-        //   [Apr 7, Apr 14, Apr 21, Apr 17, Apr 27, Apr 24, May 4, May 1, May 11]
+        // The streaming implementation merges these into a single globally time-sorted
+        // sequence; TakeWhile(< Apr 25) correctly includes Apr 7, 14, 17, 21, 24.
         e.Alarms.Add(new Alarm
         {
             Trigger = new Trigger(Duration.Zero),
@@ -360,7 +339,7 @@ public class AlarmTests
             new CalDateTime(2026, 4, 14, 9, 0, 0, "UTC"),
             new CalDateTime(2026, 4, 17, 9, 0, 0, "UTC"),
             new CalDateTime(2026, 4, 21, 9, 0, 0, "UTC"),
-            new CalDateTime(2026, 4, 24, 9, 0, 0, "UTC"), // currently MISSING
+            new CalDateTime(2026, 4, 24, 9, 0, 0, "UTC"),
         }));
     }
 
@@ -436,12 +415,11 @@ public class AlarmTests
     }
 
     [Test]
-    public void PollAlarms_StartTime_DoesNotFilterAlarmFireTimes()
+    public void PollAlarms_StartTime_FiltersAlarmFireTimes()
     {
-        // startTime passed to PollAlarms is used to begin iterating component occurrences,
-        // NOT as a lower bound on alarm fire times. An alarm whose fire time is before
-        // startTime is still returned if its component occurrence starts at/after startTime.
-        // This is intentional: callers requiring a fire-time lower bound must filter themselves.
+        // Per RFC 5545, PollAlarms(startTime, endTime) treats startTime as a lower bound
+        // on alarm FIRE TIMES. An alarm that fires before startTime is excluded, even when
+        // its component occurrence starts at or after startTime.
 
         CalendarEvent e = new()
         {
@@ -459,10 +437,7 @@ public class AlarmTests
             .Select(x => x.DateTime!)
             .ToList();
 
-        // Apr 6 alarm is returned even though it is before startTime (Apr 7).
-        Assert.That(results, Is.EqualTo(new[]
-        {
-            new CalDateTime(2026, 4, 6, 9, 0, 0, "UTC"),
-        }));
+        // The Apr 6 alarm fires before startTime (Apr 7 09:00) => correctly excluded.
+        Assert.That(results, Is.Empty);
     }
 }
