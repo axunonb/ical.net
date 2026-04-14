@@ -108,7 +108,7 @@ public class Alarm : CalendarComponent
             var componentOccurrences = rc.GetOccurrences(fromDate, options);
             if (endDate != null)
             {
-                componentOccurrences = componentOccurrences.TakeWhileBefore(endDate);
+                componentOccurrences = componentOccurrences.TakeWhileBefore(endDate.Add(-Trigger.Duration!.Value));
             }
 
             foreach (var o in componentOccurrences)
@@ -181,6 +181,15 @@ public class Alarm : CalendarComponent
     /// </summary>
     private void AddRepeatedItems(List<AlarmOccurrence> occurrences)
     {
+        // RFC 5545 section 3.8.6.2: REPEAT and DURATION must appear together.
+        // If either is absent there are no repetitions to generate.
+        // Note: Properties.Get<Duration> returns default(Duration) for an unset property,
+        // which is non-null, so we check property existence rather than the value.
+        if (Repeat <= 0 || !Properties.ContainsKey("DURATION"))
+        {
+            return;
+        }
+
         var len = occurrences.Count;
         for (var i = 0; i < len; i++)
         {
@@ -194,8 +203,7 @@ public class Alarm : CalendarComponent
 
             for (var j = 0; j < Repeat; j++)
             {
-                if (Duration != null)
-                    alarmTime = alarmTime?.Add(Duration.Value);
+                alarmTime = alarmTime?.Add(Duration.Value);
 
                 if (alarmTime != null)
                 {
