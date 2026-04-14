@@ -1,4 +1,4 @@
-﻿//
+//
 // Copyright ical.net project maintainers and contributors.
 // Licensed under the MIT license.
 //
@@ -16,7 +16,7 @@ namespace Ical.Net.DataTypes;
 /// the alarm occurs, the <see cref="Alarm"/> that fired, and the
 /// component on which the alarm fired.
 /// </remarks>
-public class AlarmOccurrence
+public class AlarmOccurrence : IComparable<AlarmOccurrence>
 {
     public Period? Period { get; set; }
 
@@ -42,5 +42,14 @@ public class AlarmOccurrence
         Alarm = a;
         Period = new Period(dt);
         Component = rc;
+    }
+
+    public int CompareTo(AlarmOccurrence? other)
+    {
+        if (other == this) return 0;
+        if (other == null) return 1;
+        if (Period == null) return -1;
+        if (other.Period == null) return 1;
+        return Period.CompareTo(other.Period);
     }
 }

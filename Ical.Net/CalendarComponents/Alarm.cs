@@ -5,8 +5,10 @@
 
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using Ical.Net.DataTypes;
 using Ical.Net.Evaluation;
+using Ical.Net.Utility;
 
 namespace Ical.Net.CalendarComponents;
 
@@ -70,74 +72,53 @@ public class Alarm : CalendarComponent
     }
 
     /// <summary>
-    /// Gets a list of alarm occurrences for the given recurring component, <paramref name="rc"/>
+    /// Gets a streaming sequence of alarm occurrences for the given recurring component, <paramref name="rc"/>
     /// that occur at or after <paramref name="fromDate"/>.
     /// </summary>
-    public virtual IList<AlarmOccurrence> GetOccurrences(IRecurringComponent rc, CalDateTime? fromDate, EvaluationOptions? options)
-        => GetOccurrences(rc, fromDate, null, options);
+    public virtual IEnumerable<AlarmOccurrence> GetOccurrences(IRecurringComponent rc, CalDateTime? fromDate, EvaluationOptions? options)
+    {
+        // Each base alarm occurrence is paired with its repetitions into a time-sorted inner sequence.
+        // OrderedNestedMergeMany then merges all inner sequences into a single time-sorted stream.
+        // Both the outer and inner sequences are ordered, so the outer can be consumed in a streaming
+        // manner, allowing indefinite recurrence rules to be handled without materialising all
+        // occurrences upfront.
+        return GetOccurrencesUnrepeated(rc, fromDate, options)
+            .Select(ao => new[] { ao }.Concat(GetRepeatedItems(ao)))
+            .OrderedNestedMergeMany();
+    }
 
-
-    /// <summary>
-    /// Gets a list of alarm occurrences for the given recurring component.
-    /// </summary>
-    /// <param name="rc">The recurring component that this alarm belongs to.</param>
-    /// <param name="fromDate">The date to start checking for alarm occurrences. The component start date is used if this value is null.</param>
-    /// <param name="endDate">The date to stop checking for occurrences.</param>
-    /// <param name="options">Options for evaluating recurring component occurrences.</param>
-    /// <returns>List of alarm occurrences.</returns>
-    public virtual IList<AlarmOccurrence> GetOccurrences(IRecurringComponent rc, CalDateTime? fromDate, CalDateTime? endDate, EvaluationOptions? options)
+    private IEnumerable<AlarmOccurrence> GetOccurrencesUnrepeated(IRecurringComponent rc, CalDateTime? fromDate, EvaluationOptions? options)
     {
         if (Trigger == null)
-        {
-            return [];
-        }
-
-        var occurrences = new List<AlarmOccurrence>();
+            yield break;
 
         // If the trigger is relative, it can recur right along with
         // the recurring items, otherwise, it happens once and
         // only once (at a precise time).
         if (Trigger.IsRelative)
         {
-            // Ensure that "FromDate" has already been set
             if (fromDate == null)
-            {
                 fromDate = rc.Start?.Copy();
-            }
 
-            var componentOccurrences = rc.GetOccurrences(fromDate, options);
-            if (endDate != null)
-            {
-                componentOccurrences = componentOccurrences.TakeWhileBefore(endDate.Add(-Trigger.Duration!.Value));
-            }
-
-            foreach (var o in componentOccurrences)
+            foreach (var o in rc.GetOccurrences(fromDate, options))
             {
                 var dt = o.Period.StartTime;
 
                 if (string.Equals(Trigger.Related, TriggerRelation.End, TriggerRelation.Comparison))
                 {
                     dt = o.Period.EffectiveEndTime ?? throw new ArgumentException(
-                        "Alarm trigger is relative to the START of the occurrence; however, the occurence has no discernible end.");
+                        "Alarm trigger is relative to the END of the occurrence; however, the occurrence has no discernible end.");
                 }
 
-                occurrences.Add(new AlarmOccurrence(this, dt.Add(Trigger.Duration!.Value), rc));
+                yield return new AlarmOccurrence(this, dt.Add(Trigger.Duration!.Value), rc);
             }
         }
         else
         {
             var dt = Trigger?.DateTime?.Copy();
             if (dt != null)
-            {
-                occurrences.Add(new AlarmOccurrence(this, dt, rc));
-            }
+                yield return new AlarmOccurrence(this, dt, rc);
         }
-
-        // If a REPEAT and DURATION value were specified,
-        // then handle those repetitions here.
-        AddRepeatedItems(occurrences);
-
-        return occurrences;
     }
 
     /// <summary>
@@ -147,69 +128,39 @@ public class Alarm : CalendarComponent
     /// </summary>
     /// <param name="start">The earliest date/time to poll triggered alarms for.</param>
     /// <param name="options"></param>
-    /// <returns>A list of <see cref="AlarmOccurrence"/> objects, each containing a triggered alarm.</returns>
-    public virtual IList<AlarmOccurrence> Poll(CalDateTime? start, EvaluationOptions? options = null)
-        => Poll(start, null, options);
-
-    /// <summary>
-    /// Polls the <see cref="Alarm"/> component for alarms that have been triggered
-    /// since the provided <paramref name="start"/> date/time and before the provided <paramref name="end"/> date/time.
-    /// If <paramref name="start"/> is null, all triggered alarms will be returned.
-    /// </summary>
-    /// <param name="start">The earliest date/time to poll triggered alarms for.</param>
-    /// <param name="end">The date/time to stop checking for triggered alarms.</param>
-    /// <param name="options"></param>
-    /// <returns>A list of <see cref="AlarmOccurrence"/> objects, each containing a triggered alarm.</returns>
-    public virtual IList<AlarmOccurrence> Poll(CalDateTime? start, CalDateTime? end, EvaluationOptions? options = null)
+    /// <returns>A sequence of <see cref="AlarmOccurrence"/> objects, each containing a triggered alarm.</returns>
+    public virtual IEnumerable<AlarmOccurrence> Poll(CalDateTime? start, EvaluationOptions? options = null)
     {
-        var results = new List<AlarmOccurrence>();
-
         // Evaluate the alarms to determine the recurrences
         if (Parent is not RecurringComponent rc)
-        {
-            return results;
-        }
+            return [];
 
-        results.AddRange(GetOccurrences(rc, start, end, options));
-        return results;
+        return GetOccurrences(rc, start, options);
     }
 
     /// <summary>
-    /// Handles the repetitions that occur from the <c>REPEAT</c> and
-    /// <c>DURATION</c> properties.  Each recurrence of the alarm will
-    /// have its own set of generated repetitions.
+    /// Yields the repetitions that occur from the <c>REPEAT</c> and <c>DURATION</c>
+    /// properties for a single base alarm occurrence.
     /// </summary>
-    private void AddRepeatedItems(List<AlarmOccurrence> occurrences)
+    private IEnumerable<AlarmOccurrence> GetRepeatedItems(AlarmOccurrence ao)
     {
+        if (ao.DateTime == null || ao.Component == null)
+            yield break;
+
         // RFC 5545 section 3.8.6.2: REPEAT and DURATION must appear together.
-        // If either is absent there are no repetitions to generate.
-        // Note: Properties.Get<Duration> returns default(Duration) for an unset property,
-        // which is non-null, so we check property existence rather than the value.
+        // Properties.Get<Duration> returns default(Duration) for an unset property (a non-null struct),
+        // so check property existence rather than the value to distinguish "not set" from zero.
         if (Repeat <= 0 || !Properties.ContainsKey("DURATION"))
+            yield break;
+
+        var alarmTime = ao.DateTime.Copy();
+
+        for (var j = 0; j < Repeat; j++)
         {
-            return;
-        }
+            alarmTime = alarmTime?.Add(Duration.Value);
 
-        var len = occurrences.Count;
-        for (var i = 0; i < len; i++)
-        {
-            var ao = occurrences[i];
-            if (ao.DateTime == null || ao.Component == null)
-            {
-                continue;
-            }
-
-            var alarmTime = ao.DateTime.Copy();
-
-            for (var j = 0; j < Repeat; j++)
-            {
-                alarmTime = alarmTime?.Add(Duration.Value);
-
-                if (alarmTime != null)
-                {
-                    occurrences.Add(new AlarmOccurrence(this, alarmTime.Copy(), ao.Component));
-                }
-            }
+            if (alarmTime != null)
+                yield return new AlarmOccurrence(this, alarmTime.Copy(), ao.Component);
         }
     }
 }
