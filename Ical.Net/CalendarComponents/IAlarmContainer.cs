@@ -16,13 +16,11 @@ public interface IAlarmContainer
     ICalendarObjectList<Alarm> Alarms { get; }
 
     ///  <summary>
-    ///  Polls <see cref="Alarm"/>s for occurrences within the <see cref="RecurringComponent.GetOccurrences"/>d
-    ///  time frame of this <see cref="RecurringComponent"/>.  For each evaluated
-    ///  occurrence if this component, each <see cref="Alarm"/> is polled for its
-    ///  corresponding alarm occurrences.
+    ///  Gets a sequence of <see cref="AlarmOccurrence"/>s produced by all <see cref="Alarms"/>
+    ///  on this component, with fire times in the range [<paramref name="startTime"/>, <paramref name="endTime"/>).
     ///  </summary>
-    /// <param name="startTime">The earliest allowable alarm occurrence to poll, or <c>null</c>.</param>
-    /// <param name="endTime"></param>
-    /// <returns>A sequence of <see cref="AlarmOccurrence"/> objects, one for each occurrence of the <see cref="Alarm"/>.</returns>
-    IEnumerable<AlarmOccurrence> PollAlarms(CalDateTime? startTime, CalDateTime? endTime);
+    /// <param name="startTime">Lower bound (inclusive) on alarm fire times, or <c>null</c> for no lower bound.</param>
+    /// <param name="endTime">Upper bound (exclusive) on alarm fire times, or <c>null</c> for no upper bound.</param>
+    /// <returns>A sequence of <see cref="AlarmOccurrence"/> objects, one for each triggered alarm.</returns>
+    IEnumerable<AlarmOccurrence> GetAlarmOccurrences(CalDateTime? startTime, CalDateTime? endTime);
 }

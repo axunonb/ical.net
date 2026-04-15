@@ -45,7 +45,7 @@ public class AlarmTests
 
         e.Alarms.Add(alarm);
 
-        var results = e.PollAlarms(new CalDateTime(1997, 3, 10), null)
+        var results = e.GetAlarmOccurrences(new CalDateTime(1997, 3, 10), null)
             .Select(x => x.DateTime)
             .ToList();
 
@@ -87,7 +87,7 @@ public class AlarmTests
 
         e.Alarms.Add(alarm);
 
-        var results = e.PollAlarms(new CalDateTime(1997, 3, 18), null)
+        var results = e.GetAlarmOccurrences(new CalDateTime(1997, 3, 18), null)
             .Select(x => x.DateTime)
             .ToList();
 
@@ -131,7 +131,7 @@ public class AlarmTests
 
         todo.Alarms.Add(alarm);
 
-        var results = todo.PollAlarms(new CalDateTime(1997, 3, 10), new CalDateTime(1997, 3, 20))
+        var results = todo.GetAlarmOccurrences(new CalDateTime(1997, 3, 10), new CalDateTime(1997, 3, 20))
             .Select(x => x.DateTime)
             .ToList();
 
@@ -164,7 +164,7 @@ public class AlarmTests
 
         // DATE-TIME triggers are absolute; the alarm fires on Apr 5 regardless of the
         // component's DTSTART (Apr 7). Polling with no startTime returns the alarm.
-        var alarmOccurrences = e.PollAlarms(null, null)
+        var alarmOccurrences = e.GetAlarmOccurrences(null, null)
             .Select(x => x.DateTime!)
             .ToList();
 
@@ -193,7 +193,7 @@ public class AlarmTests
         // Weekly occurrences: Apr 7, Apr 14, Apr 21, Apr 28.
         // TRIGGER:-P1D fires 1 day before each: Apr 6, Apr 13, Apr 20, Apr 27.
         // Apr 6 fires before startTime (Apr 7) and is correctly excluded per RFC 5545.
-        var alarmOccurrences = e.PollAlarms(e.Start, e.Start.AddDays(21))
+        var alarmOccurrences = e.GetAlarmOccurrences(e.Start, e.Start.AddDays(21))
             .Select(x => x.DateTime!)
             .ToList();
 
@@ -208,19 +208,14 @@ public class AlarmTests
     }
 
     [Test]
-    public void AlarmWithoutParentIsEmpty()
+    public void ComponentWithNoAlarms_GetAlarmOccurrences_IsEmpty()
     {
-        var alarm = new Alarm()
+        var e = new CalendarEvent
         {
-            Trigger = new()
-            {
-                DateTime = new CalDateTime(new DateTime(2026, 4, 5, 0, 0, 0, DateTimeKind.Utc))
-            }
+            Start = new CalDateTime(2026, 4, 7)
         };
 
-        var occurrences = alarm.Poll(null, null);
-
-        Assert.That(occurrences, Is.Empty);
+        Assert.That(e.GetAlarmOccurrences(null), Is.Empty);
     }
 
     [Test]
@@ -247,7 +242,7 @@ public class AlarmTests
             Trigger = new Trigger(new Duration(days: -1))
         });
 
-        var results = e.PollAlarms(
+        var results = e.GetAlarmOccurrences(
                 new CalDateTime(2026, 4, 7, 9, 0, 0, "UTC"),
                 new CalDateTime(2026, 4, 28, 9, 0, 0, "UTC"))
             .Select(x => x.DateTime!)
@@ -289,7 +284,7 @@ public class AlarmTests
         // endTime = Apr 14 09:30. The sorted stream is:
         //   [Apr 7 10:00, Apr 7 11:00, Apr 7 12:00, Apr 14 10:00, ...]
         // TakeWhile(< Apr 14 09:30) includes all three Apr 7 alarms and stops at Apr 14 10:00.
-        var results = e.PollAlarms(
+        var results = e.GetAlarmOccurrences(
                 new CalDateTime(2026, 4, 7, 9, 0, 0, "UTC"),
                 new CalDateTime(2026, 4, 14, 9, 30, 0, "UTC"))
             .Select(x => x.DateTime!)
@@ -326,7 +321,7 @@ public class AlarmTests
             Duration = new Duration(days: 10)
         });
 
-        var results = e.PollAlarms(
+        var results = e.GetAlarmOccurrences(
                 new CalDateTime(2026, 4, 7, 9, 0, 0, "UTC"),
                 new CalDateTime(2026, 4, 25, 9, 0, 0, "UTC"))
             .Select(x => x.DateTime!)
@@ -370,7 +365,7 @@ public class AlarmTests
             }
         });
 
-        var results = e.PollAlarms(
+        var results = e.GetAlarmOccurrences(
                 new CalDateTime(2026, 4, 7, 9, 0, 0, "UTC"),
                 new CalDateTime(2026, 4, 22, 0, 0, 0, "UTC"))
             .Select(x => x.DateTime!)
@@ -405,19 +400,18 @@ public class AlarmTests
             // Duration intentionally omitted
         });
 
-        var results = e.PollAlarms(null, null)
+        var results = e.GetAlarmOccurrences(null, null)
             .Select(x => x.DateTime!)
             .ToList();
 
-        // Currently returns 4 alarms (base + 3 duplicates); should return exactly 1.
         Assert.That(results, Has.Count.EqualTo(1));
         Assert.That(results[0], Is.EqualTo(new CalDateTime(2026, 4, 7, 8, 45, 0, "UTC")));
     }
 
     [Test]
-    public void PollAlarms_StartTime_FiltersAlarmFireTimes()
+    public void GetAlarmOccurrences_StartTime_FiltersAlarmFireTimes()
     {
-        // Per RFC 5545, PollAlarms(startTime, endTime) treats startTime as a lower bound
+        // Per RFC 5545, GetAlarmOccurrences(startTime, endTime) treats startTime as a lower bound
         // on alarm FIRE TIMES. An alarm that fires before startTime is excluded, even when
         // its component occurrence starts at or after startTime.
 
@@ -431,7 +425,7 @@ public class AlarmTests
             Trigger = new Trigger(new Duration(days: -1)) // fires Apr 6 for Apr 7 occurrence
         });
 
-        var results = e.PollAlarms(
+        var results = e.GetAlarmOccurrences(
                 new CalDateTime(2026, 4, 7, 9, 0, 0, "UTC"), // startTime = Apr 7
                 new CalDateTime(2026, 4, 8, 9, 0, 0, "UTC"))
             .Select(x => x.DateTime!)

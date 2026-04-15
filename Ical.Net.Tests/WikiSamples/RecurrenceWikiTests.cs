@@ -18,7 +18,6 @@ using NUnit.Framework;
 namespace Ical.Net.Tests.WikiSamples;
 #pragma warning disable IDE0007
 
-[Ignore("Wiki sample tests - not meant to be executed in CI")]
 [TestFixture, Category("Wiki")]
 internal class RecurrenceWikiTests
 {
