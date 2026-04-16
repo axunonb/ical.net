@@ -4,94 +4,434 @@
 //
 
 #nullable enable
-using Ical.Net.CalendarComponents;
-using Ical.Net.DataTypes;
-using NUnit.Framework;
-using System.Collections.Generic;
+using System;
 using System.IO;
 using System.Linq;
-using Ical.Net.Serialization.DataTypes;
+using Ical.Net.CalendarComponents;
+using Ical.Net.DataTypes;
+using Ical.Net.Serialization;
+using NUnit.Framework;
 
 namespace Ical.Net.Tests;
 
 [TestFixture]
-public class AttendeeTest
+public class AlarmTests
 {
-    internal static CalendarEvent VEventFactory() => new CalendarEvent
+    #region Examples from RFC 5545
+
+    [Test]
+    public void ExactTimeAlarmWithRepeat()
     {
-        Summary = "Testing",
-        Start = new CalDateTime(2010, 3, 25),
-        End = new CalDateTime(2010, 3, 26)
-    };
+        CalendarEvent e = new()
+        {
+            Start = new CalDateTime(1997, 3, 18)
+        };
 
-    private static readonly IList<Attendee> _attendees = new List<Attendee>
+        var valarm = """
+            BEGIN:VALARM
+            TRIGGER;VALUE=DATE-TIME:19970317T133000Z
+            REPEAT:4
+            DURATION:PT15M
+            ACTION:AUDIO
+            ATTACH;FMTTYPE=audio/basic:ftp://example.com/pub/
+                sounds/bell-01.aud
+            END:VALARM
+            """;
+
+        var alarm = SimpleDeserializer.Default
+            .Deserialize(new StringReader(valarm))
+            .Cast<Alarm>()
+            .Single();
+
+        e.Alarms.Add(alarm);
+
+        var results = e.GetAlarmOccurrences(new CalDateTime(1997, 3, 10), null)
+            .Select(x => x.DateTime)
+            .ToList();
+
+        var expectedAlarms = new[]
+        {
+            new CalDateTime(new DateTime(1997, 3, 17, 13, 30, 0, DateTimeKind.Utc)),
+            new CalDateTime(new DateTime(1997, 3, 17, 13, 45, 0, DateTimeKind.Utc)),
+            new CalDateTime(new DateTime(1997, 3, 17, 14, 0, 0, DateTimeKind.Utc)),
+            new CalDateTime(new DateTime(1997, 3, 17, 14, 15, 0, DateTimeKind.Utc)),
+            new CalDateTime(new DateTime(1997, 3, 17, 14, 30, 0, DateTimeKind.Utc)),
+        };
+
+        Assert.That(results, Is.EquivalentTo(expectedAlarms));
+    }
+
+    [Test]
+    public void RelativeAlarmWithRepeat()
     {
-        new Attendee("MAILTO:james@example.com")
+        CalendarEvent e = new()
         {
-            CommonName = "James James",
-            Role = ParticipationRole.RequiredParticipant,
-            Rsvp = true,
-            ParticipationStatus = EventParticipationStatus.Tentative
-        },
-        new Attendee("MAILTO:mary@example.com")
+            Start = new CalDateTime(1997, 3, 18, 8, 30, 0, "America/New_York")
+        };
+
+        var valarm = """
+            BEGIN:VALARM
+            TRIGGER:-PT30M
+            REPEAT:2
+            DURATION:PT15M
+            ACTION:DISPLAY
+            DESCRIPTION:Breakfast meeting with executive
+                team at 8:30 AM EST.
+            END:VALARM
+            """;
+
+        var alarm = SimpleDeserializer.Default
+            .Deserialize(new StringReader(valarm))
+            .Cast<Alarm>()
+            .Single();
+
+        e.Alarms.Add(alarm);
+
+        var results = e.GetAlarmOccurrences(new CalDateTime(1997, 3, 18), null)
+            .Select(x => x.DateTime)
+            .ToList();
+
+        var expectedAlarms = new[]
         {
-            CommonName = "Mary Mary",
-            Role = ParticipationRole.RequiredParticipant,
-            Rsvp = true,
-            ParticipationStatus = EventParticipationStatus.Accepted
-        }
-    }.AsReadOnly();
+            new CalDateTime(1997, 3, 18, 8, 0, 0, "America/New_York"),
+            new CalDateTime(1997, 3, 18, 8, 15, 0, "America/New_York"),
+            new CalDateTime(1997, 3, 18, 8, 30, 0, "America/New_York"),
+        };
 
+        Assert.That(results, Is.EquivalentTo(expectedAlarms));
+    }
 
-    /// <summary>
-    /// Ensures that attendees can be properly added to an event.
-    /// </summary>
-    [Test, Category("Attendee")]
-    public void Add1Attendee()
+    [Test]
+    public void RelativeAlarmDaysBefore()
     {
-        var evt = VEventFactory();
-        Assert.That(evt.Attendees.Count, Is.EqualTo(0));
-
-        evt.Attendees.Add(_attendees[0]);
-        Assert.That(evt.Attendees, Has.Count.EqualTo(1));
-
-        Assert.Multiple(() =>
+        Todo todo = new()
         {
-            //the properties below had been set to null during the Attendees.Add operation in NuGet version 2.1.4
-            Assert.That(evt.Attendees[0].Role, Is.EqualTo(ParticipationRole.RequiredParticipant));
-            Assert.That(evt.Attendees[0].ParticipationStatus, Is.EqualTo(EventParticipationStatus.Tentative));
+            Start = new CalDateTime(1997, 3, 18, 7, 30, 0, "America/New_York"),
+            Due = new CalDateTime(1997, 3, 18, 8, 30, 0, "America/New_York"),
+        };
+
+        var valarm = """
+            BEGIN:VALARM
+            TRIGGER;RELATED=END:-P2D
+            ACTION:EMAIL
+            ATTENDEE:mailto:john_doe@example.com
+            SUMMARY:*** REMINDER: SEND AGENDA FOR WEEKLY STAFF MEETING ***
+            DESCRIPTION:A draft agenda needs to be sent out to the attendees
+              to the weekly managers meeting (MGR-LIST). Attached is a
+              pointer the document template for the agenda file.
+            ATTACH;FMTTYPE=application/msword:http://example.com/
+             templates/agenda.doc
+            END:VALARM
+            """;
+
+        var alarm = SimpleDeserializer.Default
+            .Deserialize(new StringReader(valarm))
+            .Cast<Alarm>()
+            .Single();
+
+        todo.Alarms.Add(alarm);
+
+        var results = todo.GetAlarmOccurrences(new CalDateTime(1997, 3, 10), new CalDateTime(1997, 3, 20))
+            .Select(x => x.DateTime)
+            .ToList();
+
+        var expectedAlarms = new[]
+        {
+            new CalDateTime(1997, 3, 16, 8, 30, 0, "America/New_York"),
+        };
+
+        Assert.That(results, Is.EquivalentTo(expectedAlarms));
+    }
+
+    #endregion
+
+
+    [Test]
+    public void AlarmWithExactTime()
+    {
+        CalendarEvent e = new()
+        {
+            Start = new CalDateTime(2026, 4, 7)
+        };
+
+        e.Alarms.Add(new Alarm()
+        {
+            Trigger = new Trigger
+            {
+                DateTime = new CalDateTime(new DateTime(2026, 4, 5, 0, 0, 0, DateTimeKind.Utc))
+            }
         });
+
+        // DATE-TIME triggers are absolute; the alarm fires on Apr 5 regardless of the
+        // component's DTSTART (Apr 7). Polling with no startTime returns the alarm.
+        var alarmOccurrences = e.GetAlarmOccurrences(null, null)
+            .Select(x => x.DateTime!)
+            .ToList();
+
+        var expectedAlarms = new[]
+        {
+            new CalDateTime(new DateTime(2026, 4, 5, 0, 0, 0, DateTimeKind.Utc)),
+        };
+
+        Assert.That(alarmOccurrences, Is.EquivalentTo(expectedAlarms));
     }
 
-    [Test, Category("Attendee")]
-    public void Add2Attendees()
+    [Test]
+    public void RecurringAlarm()
     {
-        var evt = VEventFactory();
-        Assert.That(evt.Attendees.Count, Is.EqualTo(0));
+        CalendarEvent e = new()
+        {
+            Start = new CalDateTime(2026, 4, 7),
+            RecurrenceRule = new RecurrencePattern(FrequencyType.Weekly, 1)
+        };
 
-        evt.Attendees.Add(_attendees[0]);
-        evt.Attendees.Add(_attendees[1]);
-        Assert.That(evt.Attendees, Has.Count.EqualTo(2));
-        Assert.That(evt.Attendees[1].Role, Is.EqualTo(ParticipationRole.RequiredParticipant));
+        e.Alarms.Add(new Alarm()
+        {
+            Trigger = new Trigger(new Duration(days: -1))
+        });
+
+        // Weekly occurrences: Apr 7, Apr 14, Apr 21, Apr 28.
+        // TRIGGER:-P1D fires 1 day before each: Apr 6, Apr 13, Apr 20, Apr 27.
+        // Apr 6 fires before startTime (Apr 7) and is correctly excluded per RFC 5545.
+        var alarmOccurrences = e.GetAlarmOccurrences(e.Start, e.Start.AddDays(21))
+            .Select(x => x.DateTime!)
+            .ToList();
+
+        var expectedAlarms = new[]
+        {
+            new CalDateTime(2026, 4, 13),
+            new CalDateTime(2026, 4, 20),
+            new CalDateTime(2026, 4, 27)
+        };
+
+        Assert.That(alarmOccurrences, Is.EquivalentTo(expectedAlarms));
     }
 
-    /// <summary>
-    /// Ensures that attendees can be properly removed from an event.
-    /// </summary>
-    [Test, Category("Attendee")]
-    public void Remove1Attendee()
+    [Test]
+    public void ComponentWithNoAlarms_GetAlarmOccurrences_IsEmpty()
     {
-        var evt = VEventFactory();
-        Assert.That(evt.Attendees.Count, Is.EqualTo(0));
+        var e = new CalendarEvent
+        {
+            Start = new CalDateTime(2026, 4, 7)
+        };
 
-        var attendee = _attendees.First();
-        evt.Attendees.Add(attendee);
-        Assert.That(evt.Attendees, Has.Count.EqualTo(1));
+        Assert.That(e.GetAlarmOccurrences(null), Is.Empty);
+    }
 
-        evt.Attendees.Remove(attendee);
-        Assert.That(evt.Attendees.Count, Is.EqualTo(0));
+    [Test]
+    public void RecurringAlarm_NegativeTrigger_BoundaryOccurrenceShouldBeIncluded()
+    {
+        // Verifies that a component occurrence whose alarm fire time falls within the
+        // polling window [startTime, endTime) is correctly included even when the
+        // component's own DTSTART coincides with endTime (boundary case).
+        //
+        // Weekly occurrences: Apr 7, Apr 14, Apr 21, Apr 28, ...
+        // Alarms (TRIGGER:-P1D):     Apr 6, Apr 13, Apr 20, Apr 27, ...
+        //
+        // The Apr 28 occurrence fires its alarm on Apr 27 — within [Apr 7 09:00, Apr 28 09:00).
+        // The Apr 6 alarm fires before startTime (Apr 7 09:00) and is excluded per RFC 5545.
 
-        evt.Attendees.Remove(_attendees.Last());
-        Assert.That(evt.Attendees.Count, Is.EqualTo(0));
+        CalendarEvent e = new()
+        {
+            Start = new CalDateTime(2026, 4, 7, 9, 0, 0, "UTC"),
+            RecurrenceRule = new RecurrencePattern(FrequencyType.Weekly, 1)
+        };
+
+        e.Alarms.Add(new Alarm
+        {
+            Trigger = new Trigger(new Duration(days: -1))
+        });
+
+        var results = e.GetAlarmOccurrences(
+                new CalDateTime(2026, 4, 7, 9, 0, 0, "UTC"),
+                new CalDateTime(2026, 4, 28, 9, 0, 0, "UTC"))
+            .Select(x => x.DateTime!)
+            .OrderBy(x => x)
+            .ToList();
+
+        Assert.That(results, Is.EqualTo(new[]
+        {
+            new CalDateTime(2026, 4, 13, 9, 0, 0, "UTC"),
+            new CalDateTime(2026, 4, 20, 9, 0, 0, "UTC"),
+            new CalDateTime(2026, 4, 27, 9, 0, 0, "UTC"),
+        }));
+    }
+
+    [Test]
+    public void RecurringAlarm_WithRepeat_EndTimeCutoffDoesNotDropEarlierRepetitions()
+    {
+        // Verifies that alarm repetitions for an earlier component occurrence are included
+        // even when a later occurrence's base alarm falls at or after endTime.
+        // The streaming implementation (OrderedNestedMergeMany) produces a globally
+        // time-sorted stream, so TakeWhile correctly stops only when fire times exceed endTime.
+
+        CalendarEvent e = new()
+        {
+            Start = new CalDateTime(2026, 4, 7, 9, 0, 0, "UTC"),
+            RecurrenceRule = new RecurrencePattern(FrequencyType.Weekly, 1)
+        };
+
+        // TRIGGER:+PT1H, REPEAT:2, DURATION:PT1H
+        // Apr  7 09:00 occurrence → alarms: Apr  7 10:00, 11:00, 12:00
+        // Apr 14 09:00 occurrence → alarms: Apr 14 10:00, 11:00, 12:00
+        e.Alarms.Add(new Alarm
+        {
+            Trigger = new Trigger(new Duration(hours: 1)),
+            Repeat = 2,
+            Duration = new Duration(hours: 1)
+        });
+
+        // endTime = Apr 14 09:30. The sorted stream is:
+        //   [Apr 7 10:00, Apr 7 11:00, Apr 7 12:00, Apr 14 10:00, ...]
+        // TakeWhile(< Apr 14 09:30) includes all three Apr 7 alarms and stops at Apr 14 10:00.
+        var results = e.GetAlarmOccurrences(
+                new CalDateTime(2026, 4, 7, 9, 0, 0, "UTC"),
+                new CalDateTime(2026, 4, 14, 9, 30, 0, "UTC"))
+            .Select(x => x.DateTime!)
+            .OrderBy(x => x)
+            .ToList();
+
+        Assert.That(results, Is.EqualTo(new[]
+        {
+            new CalDateTime(2026, 4, 7, 10, 0, 0, "UTC"),
+            new CalDateTime(2026, 4, 7, 11, 0, 0, "UTC"),
+            new CalDateTime(2026, 4, 7, 12, 0, 0, "UTC"),
+        }));
+    }
+
+    [Test]
+    public void RecurringAlarm_WithRepeat_LongRepDuration_DoesNotDropLaterOccurrenceRepetitions()
+    {
+        CalendarEvent e = new()
+        {
+            Start = new CalDateTime(2026, 4, 7, 9, 0, 0, "UTC"),
+            RecurrenceRule = new RecurrencePattern(FrequencyType.Weekly, 1)
+        };
+
+        // TRIGGER:PT0S (fires at component start), REPEAT:2, DURATION:P10D
+        // Apr  7 occurrence => alarms: Apr  7, Apr 17, Apr 27
+        // Apr 14 occurrence => alarms: Apr 14, Apr 24, May  4
+        // Apr 21 occurrence => alarms: Apr 21, May  1, May 11
+        // The streaming implementation merges these into a single globally time-sorted
+        // sequence; TakeWhile(< Apr 25) correctly includes Apr 7, 14, 17, 21, 24.
+        e.Alarms.Add(new Alarm
+        {
+            Trigger = new Trigger(Duration.Zero),
+            Repeat = 2,
+            Duration = new Duration(days: 10)
+        });
+
+        var results = e.GetAlarmOccurrences(
+                new CalDateTime(2026, 4, 7, 9, 0, 0, "UTC"),
+                new CalDateTime(2026, 4, 25, 9, 0, 0, "UTC"))
+            .Select(x => x.DateTime!)
+            .OrderBy(x => x)
+            .ToList();
+
+        Assert.That(results, Is.EqualTo(new[]
+        {
+            new CalDateTime(2026, 4,  7, 9, 0, 0, "UTC"),
+            new CalDateTime(2026, 4, 14, 9, 0, 0, "UTC"),
+            new CalDateTime(2026, 4, 17, 9, 0, 0, "UTC"),
+            new CalDateTime(2026, 4, 21, 9, 0, 0, "UTC"),
+            new CalDateTime(2026, 4, 24, 9, 0, 0, "UTC"),
+        }));
+    }
+
+    [Test]
+    public void RecurringAlarm_RelatedEnd_ReturnsAlarmsRelativeToOccurrenceEnd()
+    {
+        // RELATED=END triggers fire relative to the END of each occurrence, not the start.
+        // GetOccurrences uses (endDate - triggerDuration) as the component window, which is
+        // only an approximation for RELATED=END (exact for RELATED=START).
+        // This test verifies alarms are computed from EffectiveEndTime, not StartTime.
+
+        CalendarEvent e = new()
+        {
+            Start = new CalDateTime(2026, 4, 7, 9, 0, 0, "UTC"),
+            Duration = new Duration(hours: 1), // each occurrence ends at 10:00 UTC
+            RecurrenceRule = new RecurrencePattern(FrequencyType.Weekly, 1)
+        };
+
+        // Alarm fires 30 min before each occurrence END → each occurrence end - PT30M
+        // Apr  7: end=10:00 => alarm  9:30
+        // Apr 14: end=10:00 => alarm  9:30
+        // Apr 21: end=10:00 => alarm  9:30
+        e.Alarms.Add(new Alarm
+        {
+            Trigger = new Trigger(new Duration(minutes: -30))
+            {
+                Related = TriggerRelation.End
+            }
+        });
+
+        var results = e.GetAlarmOccurrences(
+                new CalDateTime(2026, 4, 7, 9, 0, 0, "UTC"),
+                new CalDateTime(2026, 4, 22, 0, 0, 0, "UTC"))
+            .Select(x => x.DateTime!)
+            .OrderBy(x => x)
+            .ToList();
+
+        Assert.That(results, Is.EqualTo(new[]
+        {
+            new CalDateTime(2026, 4,  7, 9, 30, 0, "UTC"),
+            new CalDateTime(2026, 4, 14, 9, 30, 0, "UTC"),
+            new CalDateTime(2026, 4, 21, 9, 30, 0, "UTC"),
+        }));
+    }
+
+    [Test]
+    public void AlarmWithRepeatButNoDuration_ShouldNotProduceDuplicates()
+    {
+        // RFC 5545 section 3.8.6.2: REPEAT and DURATION must appear together.
+        // AddRepeatedItems skips the Add() call when Duration is null, but still executes
+        // the outer loop, appending `Repeat` identical copies of the base alarm time.
+        // This test documents the expected behavior: no duplicates should be produced.
+
+        CalendarEvent e = new()
+        {
+            Start = new CalDateTime(2026, 4, 7, 9, 0, 0, "UTC")
+        };
+
+        e.Alarms.Add(new Alarm
+        {
+            Trigger = new Trigger(new Duration(minutes: -15)),
+            Repeat = 3
+            // Duration intentionally omitted
+        });
+
+        var results = e.GetAlarmOccurrences(null, null)
+            .Select(x => x.DateTime!)
+            .ToList();
+
+        Assert.That(results, Has.Count.EqualTo(1));
+        Assert.That(results[0], Is.EqualTo(new CalDateTime(2026, 4, 7, 8, 45, 0, "UTC")));
+    }
+
+    [Test]
+    public void GetAlarmOccurrences_StartTime_FiltersAlarmFireTimes()
+    {
+        // Per RFC 5545, GetAlarmOccurrences(startTime, endTime) treats startTime as a lower bound
+        // on alarm FIRE TIMES. An alarm that fires before startTime is excluded, even when
+        // its component occurrence starts at or after startTime.
+
+        CalendarEvent e = new()
+        {
+            Start = new CalDateTime(2026, 4, 7, 9, 0, 0, "UTC")
+        };
+
+        e.Alarms.Add(new Alarm
+        {
+            Trigger = new Trigger(new Duration(days: -1)) // fires Apr 6 for Apr 7 occurrence
+        });
+
+        var results = e.GetAlarmOccurrences(
+                new CalDateTime(2026, 4, 7, 9, 0, 0, "UTC"), // startTime = Apr 7
+                new CalDateTime(2026, 4, 8, 9, 0, 0, "UTC"))
+            .Select(x => x.DateTime!)
+            .ToList();
+
+        // The Apr 6 alarm fires before startTime (Apr 7 09:00) => correctly excluded.
+        Assert.That(results, Is.Empty);
     }
 }

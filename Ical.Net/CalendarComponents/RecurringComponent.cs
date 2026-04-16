@@ -1,4 +1,4 @@
-﻿//
+//
 // Copyright ical.net project maintainers and contributors.
 // Licensed under the MIT license.
 //
@@ -10,6 +10,7 @@ using System.Runtime.Serialization;
 using Ical.Net.DataTypes;
 using Ical.Net.Evaluation;
 using Ical.Net.Proxies;
+using Ical.Net.Utility;
 
 namespace Ical.Net.CalendarComponents;
 
@@ -217,8 +218,57 @@ public abstract class RecurringComponent : UniqueComponent, IRecurringComponent
     public virtual IEnumerable<Occurrence> GetOccurrences(CalDateTime? startTime = null, EvaluationOptions? options = null)
         => RecurrenceUtil.GetOccurrences(this, startTime, options);
 
-    public virtual IList<AlarmOccurrence> PollAlarms() => PollAlarms(null, null);
+    /// <summary>
+    /// Gets a streaming sequence of <see cref="AlarmOccurrence"/>s for all <see cref="Alarms"/>
+    /// on this component, with fire times in the range [<paramref name="startTime"/>, <paramref name="endTime"/>).
+    /// </summary>
+    /// <param name="startTime">Lower bound (inclusive) on alarm fire times, or <c>null</c> for no lower bound.</param>
+    /// <param name="endTime">Upper bound (exclusive) on alarm fire times, or <c>null</c> for no upper bound.</param>
+    /// <remarks>
+    /// Component occurrences are evaluated once and shared across all alarms.
+    /// When <paramref name="endTime"/> is <c>null</c> and the component has an unbounded recurrence rule,
+    /// evaluation will continue indefinitely; callers must apply their own termination condition.
+    /// </remarks>
+    public virtual IEnumerable<AlarmOccurrence> GetAlarmOccurrences(CalDateTime? startTime, CalDateTime? endTime = null)
+    {
+        if (!Alarms.Any()) return [];
 
-    public virtual IList<AlarmOccurrence> PollAlarms(CalDateTime? startTime, CalDateTime? endTime)
-        => Alarms.SelectMany(a => a.Poll(startTime).TakeWhile(p => (endTime == null) || (p.Period?.StartTime < endTime))).ToList();
+        var rawOccurrences = GetOccurrences(startTime);
+        // materialize the component occurrences once and share the list across all alarms
+        var occurrences = endTime == null
+            ? rawOccurrences.ToList()
+            : rawOccurrences.TakeWhile(o => o.Period.StartTime <= endTime).ToList();
+
+        return Alarms
+            .Select(a => GetAlarmOccurrenceStream(a, occurrences))
+            .OrderedMergeMany()
+            .SkipWhile(ao => startTime != null && ao.DateTime < startTime)
+            .TakeWhile(ao => endTime == null || ao.DateTime < endTime);
+    }
+
+    private IEnumerable<AlarmOccurrence> GetAlarmOccurrenceStream(Alarm alarm, IList<Occurrence> occurrences)
+    {
+        if (alarm.Trigger == null) return [];
+
+        if (alarm.Trigger.IsRelative)
+        {
+            return occurrences
+                .Select(o =>
+                {
+                    var anchor = string.Equals(alarm.Trigger.Related, TriggerRelation.End, TriggerRelation.Comparison)
+                        ? o.Period.EffectiveEndTime ?? throw new ArgumentException(
+                            "Alarm trigger is relative to the END of the occurrence; however, the occurrence has no discernible end.")
+                        : o.Period.StartTime;
+                    return alarm.GetFireTimes(anchor.Add(alarm.Trigger.Duration!.Value))
+                        .Select(ft => new AlarmOccurrence(alarm, ft, this));
+                })
+                .OrderedNestedMergeMany();
+        }
+
+        // else the trigger is absolute, so we ignore the component occurrences
+        var dt = alarm.Trigger.DateTime?.Copy();
+        if (dt == null) return [];
+        return alarm.GetFireTimes(dt)
+            .Select(ft => new AlarmOccurrence(alarm, ft, this));
+    }
 }
